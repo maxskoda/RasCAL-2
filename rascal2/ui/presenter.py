@@ -69,6 +69,38 @@ class MainWindowPresenter:
         self.model.load_r1_project(load_path)
         self.model.results = self.quick_run()
 
+    def import_ort_project(self, ort_path: str):
+        """
+        Import an ORSO .ort file and create/populate a RasCAL-2 project.
+        This is called from a Worker thread.
+        """
+        from rascal2.io.orso_importer import import_ort_to_project
+
+        ort_path = str(Path(ort_path))
+
+        # Decide a default project name + folder
+        ort_file = Path(ort_path)
+        proj_name = ort_file.stem.replace("_", " ")
+        save_path = str(ort_file.parent / f"{ort_file.stem}_rascal2")
+
+        # Create project folder (like New Project does)
+        # NOTE: create_project creates a default rat.Project + rat.Controls
+        self.model.create_project(proj_name, save_path)
+
+        # Build a ratapi.Project (and optionally Controls) from the ORT
+        imported_project, imported_controls = import_ort_to_project(ort_path, base_project=self.model.project)
+
+        # Store into the model (THIS is what the UI uses)
+        self.model.project = imported_project
+        if imported_controls is not None:
+            self.model.controls = imported_controls
+
+        # Optional: preview results like other loaders do
+        self.model.results = self.quick_run(self.model.project)
+
+        # Update recent projects list
+        update_recent_projects(self.model.save_path)
+
     def initialise_ui(self):
         """Initialise UI for a project."""
         suffix = " [Example]" if self.model.is_project_example() else f"[{self.model.save_path}]"

@@ -6,7 +6,7 @@ from rascal2.config import EXAMPLES_PATH, EXAMPLES_TEMP_PATH, path_for
 from rascal2.core.enums import UnsavedReply
 from rascal2.dialogs.about_dialog import AboutDialog
 from rascal2.dialogs.settings_dialog import SettingsDialog
-from rascal2.dialogs.startup_dialog import PROJECT_FILES, LoadDialog, LoadR1Dialog, NewProjectDialog, StartupDialog
+from rascal2.dialogs.startup_dialog import PROJECT_FILES, LoadDialog, LoadR1Dialog, NewProjectDialog, StartupDialog, ImportORTDialog
 from rascal2.settings import MDIGeometries, Settings, get_global_settings
 from rascal2.widgets import ControlsWidget, PlotWidget, TerminalWidget
 from rascal2.widgets.project import ProjectWidget
@@ -111,6 +111,10 @@ class MainWindowView(QtWidgets.QMainWindow):
         self.open_r1_action = QtGui.QAction("Open &RasCAL-1 Project")
         self.open_r1_action.setStatusTip("Open a RasCAL-1 project")
         self.open_r1_action.triggered.connect(lambda: self.show_project_dialog(LoadR1Dialog))
+
+        self.actionImportORT = QtGui.QAction("Import ORSO (.ort)…", self)
+        self.actionImportORT.setStatusTip("Import an ORSO .ort file (data + model)")
+        self.actionImportORT.triggered.connect(lambda: self.show_project_dialog(ImportORTDialog))
 
         self.save_project_action = QtGui.QAction("&Save", self)
         self.save_project_action.setStatusTip("Save project")
@@ -217,6 +221,7 @@ class MainWindowView(QtWidgets.QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.open_project_action)
         file_menu.addAction(self.open_r1_action)
+        file_menu.addAction(self.actionImportORT)
         file_menu.addSeparator()
         file_menu.addAction(self.save_project_action)
         file_menu.addAction(self.save_as_action)

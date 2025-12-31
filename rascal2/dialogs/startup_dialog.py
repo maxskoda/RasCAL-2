@@ -242,6 +242,7 @@ class NewProjectDialog(StartupDialog):
             self.accept()
 
 
+
 class DisplayWidget(QtWidgets.QWidget):
     """Fancy display widget for title and description items in a list."""
 
@@ -449,3 +450,64 @@ class LoadR1Dialog(StartupDialog):
                 self.loading_bar.hide,
             )
             self.loading_bar.setVisible(True)
+
+
+class ImportORTDialog(StartupDialog):
+    """Dialog to import an ORSO .ort file into a new RasCAL-2 project."""
+
+    def __init__(self, parent):
+        # file selector instead of folder selector
+        self.folder_selector = lambda p, _: QtWidgets.QFileDialog.getOpenFileName(
+            p,
+            "Select ORSO File",
+            filter="ORSO (*.ort);;All files (*)",
+        )[0]
+        super().__init__(parent)
+
+    def create_form(self, form_layout):
+        self.setWindowTitle("Import ORSO (.ort)")
+        super().create_form(form_layout)
+
+        self.project_folder_label.setText("ORSO file:")
+        self.project_folder.setPlaceholderText("Select ORSO .ort file")
+
+    def create_buttons(self):
+        import_button = QtWidgets.QPushButton("Import", objectName="ImportButton")
+        import_button.clicked.connect(self.import_ort)
+        return [import_button] + super().create_buttons()
+
+    @staticmethod
+    def verify_folder(file_path: str):
+        # NOTE: 'verify_folder' naming is inherited; it's really "verify selection"
+        if not file_path.lower().endswith(".ort"):
+            raise ValueError("Please select a .ort file.")
+        if not os.access(file_path, os.R_OK):
+            raise ValueError("You do not have permission to read this .ort file.")
+        if not os.access(Path(file_path).parent, os.W_OK):
+            # optional: if importer will write a project folder beside it
+            # if you import "in memory" only, you can drop this check
+            raise ValueError("You do not have permission to write to this folder.")
+
+    def import_ort(self):
+        """Run ORT import via Worker (non-blocking)."""
+        if self.project_folder.text() == "":
+            self.set_folder_error("Please specify an ORSO .ort file.")
+            return
+        if not self.project_folder_error.isHidden():
+            return
+
+        ort_path = self.project_folder.text()
+
+        self.worker = Worker.call(
+            self.parent().presenter.import_ort_project,   # you implement this
+            [ort_path],
+            self.project_start_success,
+            self.project_start_failed,
+            lambda: self.block_for_worker(False),
+        )
+        self.block_for_worker(True)
+
+    def block_for_worker(self, disabled: bool):
+        self.loading_bar.setVisible(disabled)
+        self.project_folder.setDisabled(disabled)
+        self.cancel_button.setDisabled(disabled)
