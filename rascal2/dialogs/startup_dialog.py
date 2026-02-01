@@ -452,62 +452,210 @@ class LoadR1Dialog(StartupDialog):
             self.loading_bar.setVisible(True)
 
 
+# class ImportORTDialog(StartupDialog):
+#     """Dialog to import an ORSO .ort file into a new RasCAL-2 project."""
+#
+#     def __init__(self, parent):
+#         # file selector instead of folder selector
+#         self.folder_selector = lambda p, _: QtWidgets.QFileDialog.getOpenFileName(
+#             p,
+#             "Select ORSO File",
+#             filter="ORSO (*.ort);;All files (*)",
+#         )[0]
+#         super().__init__(parent)
+#
+#     def create_form(self, form_layout):
+#         self.setWindowTitle("Import ORSO (.ort)")
+#         super().create_form(form_layout)
+#
+#         self.project_folder_label.setText("ORSO file:")
+#         self.project_folder.setPlaceholderText("Select ORSO .ort file")
+#
+#     def create_buttons(self):
+#         import_button = QtWidgets.QPushButton("Import", objectName="ImportButton")
+#         import_button.clicked.connect(self.import_ort)
+#         return [import_button] + super().create_buttons()
+#
+#     @staticmethod
+#     def verify_folder(file_path: str):
+#         # NOTE: 'verify_folder' naming is inherited; it's really "verify selection"
+#         if not file_path.lower().endswith(".ort"):
+#             raise ValueError("Please select a .ort file.")
+#         if not os.access(file_path, os.R_OK):
+#             raise ValueError("You do not have permission to read this .ort file.")
+#         if not os.access(Path(file_path).parent, os.W_OK):
+#             # optional: if importer will write a project folder beside it
+#             # if you import "in memory" only, you can drop this check
+#             raise ValueError("You do not have permission to write to this folder.")
+#
+#     def import_ort(self):
+#         """Run ORT import via Worker (non-blocking)."""
+#         if self.project_folder.text() == "":
+#             self.set_folder_error("Please specify an ORSO .ort file.")
+#             return
+#         if not self.project_folder_error.isHidden():
+#             return
+#
+#         ort_path = self.project_folder.text()
+#
+#         self.worker = Worker.call(
+#             self.parent().presenter.import_ort_project,   # you implement this
+#             [ort_path],
+#             self.project_start_success,
+#             self.project_start_failed,
+#             lambda: self.block_for_worker(False),
+#         )
+#         self.block_for_worker(True)
+#
+#     def block_for_worker(self, disabled: bool):
+#         self.loading_bar.setVisible(disabled)
+#         self.project_folder.setDisabled(disabled)
+#         self.cancel_button.setDisabled(disabled)
+
 class ImportORTDialog(StartupDialog):
     """Dialog to import an ORSO .ort file into a new RasCAL-2 project."""
 
     def __init__(self, parent):
-        # file selector instead of folder selector
-        self.folder_selector = lambda p, _: QtWidgets.QFileDialog.getOpenFileName(
+        super().__init__(parent)
+
+        self.import_button = None
+
+        # separate selectors
+        self.ort_selector = lambda p: QtWidgets.QFileDialog.getOpenFileName(
             p,
             "Select ORSO File",
             filter="ORSO (*.ort);;All files (*)",
         )[0]
-        super().__init__(parent)
+
+        self.dest_selector = QtWidgets.QFileDialog.getExistingDirectory
 
     def create_form(self, form_layout):
         self.setWindowTitle("Import ORSO (.ort)")
-        super().create_form(form_layout)
 
-        self.project_folder_label.setText("ORSO file:")
-        self.project_folder.setPlaceholderText("Select ORSO .ort file")
+        # --- ORT file row ---
+        self.ort_label = QtWidgets.QLabel("ORSO file:")
+        self.ort_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        self.ort_path_edit = QtWidgets.QLineEdit(self)
+        self.ort_path_edit.setReadOnly(True)
+        self.ort_path_edit.setPlaceholderText("Select ORSO .ort file")
+        self.ort_path_edit.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+
+        ort_browse = QtWidgets.QPushButton("Browse", objectName="BrowseORTButton")
+        ort_browse.clicked.connect(self.pick_ort_file)
+
+        self.ort_error = QtWidgets.QLabel("", objectName="ErrorLabel")
+        self.ort_error.hide()
+
+        r = form_layout.rowCount()
+        form_layout.addWidget(self.ort_label, r, 0, 1, 1, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        form_layout.addWidget(self.ort_path_edit, r, 1, 1, 4)
+        form_layout.addWidget(ort_browse, r, 5, 1, 1)
+        form_layout.addWidget(self.ort_error, r + 1, 1, 1, 4)
+
+        # --- Destination folder row (reuse StartupDialog style) ---
+        self.project_folder_label = QtWidgets.QLabel("Project Folder:")
+        self.project_folder_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        self.project_folder = QtWidgets.QLineEdit(self)
+        self.project_folder.setReadOnly(True)
+        self.project_folder.setPlaceholderText("Select destination folder")
+        self.project_folder.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+
+        dest_browse = QtWidgets.QPushButton("Browse", objectName="BrowseDestButton")
+        dest_browse.clicked.connect(self.pick_dest_folder)
+
+        self.project_folder_error = QtWidgets.QLabel("", objectName="ErrorLabel")
+        self.project_folder_error.hide()
+
+        r = form_layout.rowCount()
+        form_layout.addWidget(self.project_folder_label, r, 0, 1, 1, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        form_layout.addWidget(self.project_folder, r, 1, 1, 4)
+        form_layout.addWidget(dest_browse, r, 5, 1, 1)
+        form_layout.addWidget(self.project_folder_error, r + 1, 1, 1, 4)
 
     def create_buttons(self):
-        import_button = QtWidgets.QPushButton("Import", objectName="ImportButton")
-        import_button.clicked.connect(self.import_ort)
-        return [import_button] + super().create_buttons()
+        self.import_button = QtWidgets.QPushButton("Import", objectName="ImportButton")
+        self.import_button.clicked.connect(self.import_ort)
+        return [self.import_button] + super().create_buttons()
+
+    def pick_ort_file(self):
+        path = self.ort_selector(self)
+        if not path:
+            return
+        try:
+            self.verify_ort(path)
+        except ValueError as e:
+            self.ort_error.setText(str(e))
+            self.ort_error.show()
+            self.ort_path_edit.setText("")
+        else:
+            self.ort_error.hide()
+            self.ort_path_edit.setText(path)
+
+    def pick_dest_folder(self):
+        folder = self.dest_selector(self, "Select Folder")
+        if not folder:
+            return
+        try:
+            self.verify_dest(folder)
+        except ValueError as e:
+            self.set_folder_error(str(e))
+            self.project_folder.setText("")
+        else:
+            self.set_folder_error("")
+            self.project_folder.setText(folder)
 
     @staticmethod
-    def verify_folder(file_path: str):
-        # NOTE: 'verify_folder' naming is inherited; it's really "verify selection"
+    def verify_ort(file_path: str):
         if not file_path.lower().endswith(".ort"):
             raise ValueError("Please select a .ort file.")
         if not os.access(file_path, os.R_OK):
             raise ValueError("You do not have permission to read this .ort file.")
-        if not os.access(Path(file_path).parent, os.W_OK):
-            # optional: if importer will write a project folder beside it
-            # if you import "in memory" only, you can drop this check
+
+    @staticmethod
+    def verify_dest(folder_path: str):
+        if not os.access(folder_path, os.W_OK):
             raise ValueError("You do not have permission to write to this folder.")
+        if any(Path(folder_path, file).exists() for file in PROJECT_FILES):
+            raise ValueError("Folder already contains a project.")
 
     def import_ort(self):
-        """Run ORT import via Worker (non-blocking)."""
-        if self.project_folder.text() == "":
-            self.set_folder_error("Please specify an ORSO .ort file.")
+        # Validate ORT selection
+        ort_path = self.ort_path_edit.text().strip()
+        if ort_path == "":
+            self.ort_error.setText("Please select an ORSO .ort file.")
+            self.ort_error.show()
+            return
+        if not self.ort_error.isHidden():
+            return
+
+        # Validate destination folder selection
+        project_folder = self.project_folder.text().strip()
+        if project_folder == "":
+            self.set_folder_error("Please select a destination project folder.")
             return
         if not self.project_folder_error.isHidden():
             return
 
-        ort_path = self.project_folder.text()
-
         self.worker = Worker.call(
-            self.parent().presenter.import_ort_project,   # you implement this
-            [ort_path],
+            self.parent().presenter.import_ort_project,
+            [ort_path, project_folder],          # ✅ pass BOTH args
             self.project_start_success,
             self.project_start_failed,
             lambda: self.block_for_worker(False),
         )
         self.block_for_worker(True)
 
+
     def block_for_worker(self, disabled: bool):
         self.loading_bar.setVisible(disabled)
+
+        # disable inputs while importing
+        self.ort_path_edit.setDisabled(disabled)
         self.project_folder.setDisabled(disabled)
+        if self.import_button is not None:
+            self.import_button.setDisabled(disabled)
+
         self.cancel_button.setDisabled(disabled)
+

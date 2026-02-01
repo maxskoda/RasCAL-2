@@ -69,38 +69,6 @@ class MainWindowPresenter:
         self.model.load_r1_project(load_path)
         self.model.results = self.quick_run()
 
-    def import_ort_project(self, ort_path: str):
-        """
-        Import an ORSO .ort file and create/populate a RasCAL-2 project.
-        This is called from a Worker thread.
-        """
-        from rascal2.io.orso_importer import import_ort_to_project
-
-        ort_path = str(Path(ort_path))
-
-        # Decide a default project name + folder
-        ort_file = Path(ort_path)
-        proj_name = ort_file.stem.replace("_", " ")
-        save_path = str(ort_file.parent / f"{ort_file.stem}_rascal2")
-
-        # Create project folder (like New Project does)
-        # NOTE: create_project creates a default rat.Project + rat.Controls
-        self.model.create_project(proj_name, save_path)
-
-        # Build a ratapi.Project (and optionally Controls) from the ORT
-        imported_project, imported_controls = import_ort_to_project(ort_path, base_project=self.model.project)
-
-        # Store into the model (THIS is what the UI uses)
-        self.model.project = imported_project
-        if imported_controls is not None:
-            self.model.controls = imported_controls
-
-        # Optional: preview results like other loaders do
-        self.model.results = self.quick_run(self.model.project)
-
-        # Update recent projects list
-        update_recent_projects(self.model.save_path)
-
     def initialise_ui(self):
         """Initialise UI for a project."""
         suffix = " [Example]" if self.model.is_project_example() else f"[{self.model.save_path}]"
@@ -112,6 +80,47 @@ class MainWindowPresenter:
         self.view.handle_results(self.model.results)
         self.view.undo_stack.clear()
         self.view.enable_elements()
+
+    def import_ort_project(self, ort_path: str, project_folder: str):
+        """
+        Import an ORSO .ort file into a *new* RasCAL-2 project folder.
+        Called from a Worker thread.
+        """
+        from pathlib import Path
+        from rascal2.core.orso_importer import import_ort_to_project
+        from rascal2.settings import update_recent_projects
+
+        ort_file = Path(ort_path).expanduser().resolve()
+        save_dir = Path(project_folder).expanduser().resolve()
+
+        # Project name from ORT file
+        proj_name = ort_file.stem.replace("_", " ").strip() or "ORSO Import"
+
+        # 1) Create the project shell in the chosen folder
+        self.model.create_project(proj_name, str(save_dir))
+
+        # Be explicit (create_project sets this, but keep it crystal clear)
+        self.model.save_path = str(save_dir)
+
+        # 2) Populate project from ORT
+        imported_project, imported_controls = import_ort_to_project(
+            str(ort_file),
+            base_project=self.model.project,
+            project_folder=str(save_dir),
+        )
+
+        self.model.project = imported_project
+        if imported_controls is not None:
+            self.model.controls = imported_controls
+
+        # 3) Optional preview run (matches behaviour of other loaders)
+        self.model.results = self.quick_run(self.model.project)
+
+        # 4) Persist so it becomes a normal RasCAL-2 project folder
+        self.model.save_project()
+
+        # 5) Recent projects should point at the project folder
+        update_recent_projects(self.model.save_path)
 
     def edit_controls(self, setting: str, value: Any):
         """Edit a setting in the Controls object.

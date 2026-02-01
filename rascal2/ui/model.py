@@ -5,6 +5,7 @@ from pathlib import Path
 import ratapi as rat
 import ratapi.outputs
 from PyQt6 import QtCore
+from rascal2.config import EXAMPLES_PATH, EXAMPLES_TEMP_PATH
 
 from rascal2.config import EXAMPLES_PATH, EXAMPLES_TEMP_PATH
 
@@ -36,6 +37,33 @@ def copy_example_project(load_path):
             load_path = temp_dir
     return str(load_path)
 
+
+def copy_example_project(load_path):
+    """Copy example project to temp directory so user does not modify original.
+
+    Non-example projects are not copied.
+
+    Parameters
+    ----------
+    load_path : str
+        The load path of the project.
+
+    Returns
+    -------
+    new_load_path: str
+        The path of the copied project if project is example otherwise the same as load_path.
+    """
+    load_path = Path(load_path)
+    if load_path.is_relative_to(EXAMPLES_PATH):
+        if load_path.is_file():
+            temp_dir = EXAMPLES_TEMP_PATH / load_path.parent.stem
+            shutil.copytree(load_path.parent, temp_dir, dirs_exist_ok=True)
+            load_path = temp_dir / load_path.name
+        else:
+            temp_dir = EXAMPLES_TEMP_PATH / load_path.name
+            shutil.copytree(load_path, temp_dir, dirs_exist_ok=True)
+            load_path = temp_dir
+    return str(load_path)
 
 class MainWindowModel(QtCore.QObject):
     """Manages project data and communicates to view via signals.
@@ -125,6 +153,9 @@ class MainWindowModel(QtCore.QObject):
         if self.results:
             self.results.save(Path(save_path, "results.json"))
         self.save_path = save_path
+
+    def is_project_example(self):
+        return Path(self.save_path).is_relative_to(EXAMPLES_TEMP_PATH)
 
     def is_project_example(self):
         return Path(self.save_path).is_relative_to(EXAMPLES_TEMP_PATH)
