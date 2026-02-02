@@ -110,7 +110,7 @@ class MainWindowPresenter:
         self.model.results = self.quick_run(self.model.project)
 
         # Persist so it becomes a normal RasCAL-2 project folder
-        self.model.save_project()
+        self.model.save_project(self.model.save_path)
         update_recent_projects(self.model.save_path)
 
     def edit_controls(self, setting: str, value: Any):
