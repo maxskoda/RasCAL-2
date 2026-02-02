@@ -82,44 +82,35 @@ class MainWindowPresenter:
         self.view.enable_elements()
 
     def import_ort_project(self, ort_path: str, project_folder: str):
-        """
-        Import an ORSO .ort file into a *new* RasCAL-2 project folder.
-        Called from a Worker thread.
-        """
-        from pathlib import Path
         from rascal2.core.orso_importer import import_ort_to_project
+        from pathlib import Path
         from rascal2.settings import update_recent_projects
 
-        ort_file = Path(ort_path).expanduser().resolve()
-        save_dir = Path(project_folder).expanduser().resolve()
-
-        # Project name from ORT file
+        ort_file = Path(ort_path)
         proj_name = ort_file.stem.replace("_", " ").strip() or "ORSO Import"
+        save_path = str(Path(project_folder))  # ✅ use what user selected
 
-        # 1) Create the project shell in the chosen folder
-        self.model.create_project(proj_name, str(save_dir))
+        self.model.create_project(proj_name, save_path)
 
-        # Be explicit (create_project sets this, but keep it crystal clear)
-        self.model.save_path = str(save_dir)
-
-        # 2) Populate project from ORT
         imported_project, imported_controls = import_ort_to_project(
-            str(ort_file),
+            ort_path,
             base_project=self.model.project,
-            project_folder=str(save_dir),
+            project_folder=save_path,
         )
 
         self.model.project = imported_project
         if imported_controls is not None:
             self.model.controls = imported_controls
 
-        # 3) Optional preview run (matches behaviour of other loaders)
+        # Optional preview run (no MATLAB required for standard layers)
+        print("Imported layers:", len(self.model.project.layers))
+        print("Imported parameters:", len(self.model.project.parameters))
+        print("First layer:", self.model.project.layers[0] if self.model.project.layers else None)
+
         self.model.results = self.quick_run(self.model.project)
 
-        # 4) Persist so it becomes a normal RasCAL-2 project folder
+        # Persist so it becomes a normal RasCAL-2 project folder
         self.model.save_project()
-
-        # 5) Recent projects should point at the project folder
         update_recent_projects(self.model.save_path)
 
     def edit_controls(self, setting: str, value: Any):
