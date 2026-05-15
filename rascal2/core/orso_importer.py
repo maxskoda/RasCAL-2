@@ -8,7 +8,8 @@ import numpy as np
 from orsopy.fileio import load_orso
 
 import ratapi as rat
-from ratapi.models import Data, Parameter, Layer
+from rascal2.core.bilayer_utils import build_bilayer_specs, extract_bilayers_from_model
+from ratapi.models import CustomFile, Data, Parameter, Layer
 
 
 # -----------------------------------------------------------------------------
@@ -128,6 +129,78 @@ def _ensure_parameter(
     return name
 
 
+def _write_bilayer_custom_model(
+    project_dir: Path,
+    filename: str,
+    base_layers: list[dict],
+    bilayer_specs: list[dict],
+) -> str:
+    file_path = project_dir / filename
+    function_name = file_path.stem
+    payload = repr({"base_layers": base_layers, "bilayer_specs": bilayer_specs})
+
+    content = f'''import numpy as np
+
+
+MODEL_PAYLOAD = {payload}
+
+
+def {function_name}(params, bulk_in, bulk_out, contrast):
+    """Auto-generated custom bilayer model from ORSO import."""
+    p = list(params)
+    sub_rough = p.pop(0) if p else 3.0
+
+    layers = []
+    for layer in MODEL_PAYLOAD["base_layers"]:
+        layers.append([layer["thickness"], layer["sld"], layer["roughness"]])
+
+    for spec in MODEL_PAYLOAD["bilayer_specs"]:
+        apm = p.pop(0) if p else 55.0
+        head_hyd_inner = p.pop(0) if p else 0.2
+        head_hyd_outer = p.pop(0) if p else 0.2
+        bilayer_hyd = p.pop(0) if p else 0.1
+        rough = p.pop(0) if p else 4.0
+
+        v_head_i = spec["v_head_inner"]
+        v_tail_i = spec["v_tail_inner"]
+        v_head_o = spec["v_head_outer"]
+        v_tail_o = spec["v_tail_outer"]
+
+        t_head_i = v_head_i / apm if apm else 0.0
+        t_tail_i = v_tail_i / apm if apm else 0.0
+        t_tail_o = v_tail_o / apm if apm else 0.0
+        t_head_o = v_head_o / apm if apm else 0.0
+
+        sld_w = bulk_out[contrast]
+        sl_head_inner = spec.get("sl_head_inner", spec["sld_head_inner"])
+        sl_tail_inner = spec.get("sl_tail_inner", spec["sld_tail_inner"])
+        sl_tail_outer = spec.get("sl_tail_outer", spec["sld_tail_outer"])
+        sl_head_outer = spec.get("sl_head_outer", spec["sld_head_outer"])
+        sld_head_inner = sl_head_inner / v_head_i if v_head_i else 0.0
+        sld_tail_inner = sl_tail_inner / v_tail_i if v_tail_i else 0.0
+        sld_tail_outer = sl_tail_outer / v_tail_o if v_tail_o else 0.0
+        sld_head_outer = sl_head_outer / v_head_o if v_head_o else 0.0
+
+        sld_head_i = (head_hyd_inner * sld_w) + ((1 - head_hyd_inner) * sld_head_inner)
+        sld_tail_i = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * sld_tail_inner)
+        sld_tail_o = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * sld_tail_outer)
+        sld_head_o = (head_hyd_outer * sld_w) + ((1 - head_hyd_outer) * sld_head_outer)
+
+        layers.extend(
+            [
+                [t_head_i, sld_head_i, rough],
+                [t_tail_i, sld_tail_i, rough],
+                [t_tail_o, sld_tail_o, rough],
+                [t_head_o, sld_head_o, rough],
+            ]
+        )
+
+    return np.array(layers), sub_rough
+'''
+    file_path.write_text(content)
+    return function_name
+
+
 # -----------------------------------------------------------------------------
 # Main importer
 # -----------------------------------------------------------------------------
@@ -173,12 +246,17 @@ def import_ort_to_project(
     bulk_in_ref = "SLD Air"
     bulk_out_ref_default = "SLD D2O"
     layer_name_stack: list[str] = []
+    bilayer_specs_raw: list[dict] = []
+    bilayer_present = False
+    base_layers_for_custom: list[dict] = []
 
     if orso:
         sample0 = orso[0].info.data_source.sample
         model0 = getattr(sample0, "model", None)
 
         if model0 is not None:
+            bilayer_specs_raw = extract_bilayers_from_model(model0)
+            bilayer_present = bool(bilayer_specs_raw)
             try:
                 resolved = model0.resolve_to_layers()
                 if len(resolved) >= 2:
@@ -218,6 +296,9 @@ def import_ort_to_project(
                             Layer(name=lname, thickness=t_p, roughness=r_p, SLD_real=s_p)
                         )
                         layer_name_stack.append(lname)
+                        base_layers_for_custom.append(
+                            {"name": lname, "thickness": t, "sld": s, "roughness": r}
+                        )
             except Exception as e:
                 print("ORSO model resolution failed:", e)
 
@@ -243,6 +324,10 @@ def import_ort_to_project(
 
         model = getattr(sample, "model", None)
         if model is not None:
+            bilayers_here = extract_bilayers_from_model(model)
+            bilayer_present = bilayer_present or bool(bilayers_here)
+            if bilayers_here and not bilayer_specs_raw:
+                bilayer_specs_raw = bilayers_here
             try:
                 resolved = model.resolve_to_layers()
                 bulk_out = resolved[-1]
@@ -266,5 +351,42 @@ def import_ort_to_project(
             data=cname,
             model=layer_name_stack,
         )
+
+    if bilayer_present:
+        project.model = "custom layers"
+        project.layers.clear()
+        project.custom_files.clear()
+        keep = {"Substrate Roughness"}
+        for p in list(project.parameters):
+            if p.name not in keep:
+                project.parameters.remove(p)
+
+        bilayer_specs = build_bilayer_specs(bilayer_specs_raw)
+        _ensure_parameter(project, "Substrate Roughness", 3.0, floor=0.0)
+        for idx, _ in enumerate(bilayer_specs, start=1):
+            _ensure_parameter(project, f"Bilayer{idx} APM", 55.0, floor=1.0)
+            _ensure_parameter(project, f"Bilayer{idx} HeadHyd Inner", 0.2, floor=0.0)
+            _ensure_parameter(project, f"Bilayer{idx} HeadHyd Outer", 0.2, floor=0.0)
+            _ensure_parameter(project, f"Bilayer{idx} BilayerHydration", 0.1, floor=0.0)
+            _ensure_parameter(project, f"Bilayer{idx} Rough", 4.0, floor=0.0)
+
+        custom_filename = "orso_bilayer_model.py"
+        function_name = _write_bilayer_custom_model(
+            proj_dir,
+            custom_filename,
+            base_layers_for_custom,
+            bilayer_specs,
+        )
+        project.custom_files.append(
+            CustomFile(
+                name="ORSO Bilayer Model",
+                filename=custom_filename,
+                language="python",
+                path=str(proj_dir),
+                function_name=function_name,
+            )
+        )
+        for contrast in project.contrasts:
+            contrast.model = ["ORSO Bilayer Model"]
 
     return project, None
