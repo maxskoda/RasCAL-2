@@ -19,6 +19,8 @@ RE_BILAYER_BLOCK = re.compile(r"""bilayer\s*\((.*?)\)""", flags=re.IGNORECASE)
 RE_BILAYER_KV = re.compile(
     r"""\b(inner|outer)\b\s*=\s*(".*?"|'.*?'|[^,\s\)]+)""",
     flags=re.IGNORECASE,
+RE_BILAYER = re.compile(
+    r"""^bilayer\s*\(\s*inner\s*=\s*([A-Za-z0-9_]+)\s*,\s*outer\s*=\s*([A-Za-z0-9_]+)\s*\)\s*$"""
 )
 
 
@@ -41,6 +43,7 @@ def scalar_nsl(x):
 
 def get_lipid_constants(lipid_name: str):
     """Get head/tail volumes and scattering lengths for a lipid from molgroups.lipids."""
+    """Get head/tail volumes and SLDs for a lipid from molgroups.lipids."""
     if not HAS_MOLGROUPS:
         return None
 
@@ -62,6 +65,9 @@ def get_lipid_constants(lipid_name: str):
         head_vol = 330.0
 
     head_sl = head_nsl * 1e-5 if head_nsl != 0 else 0.0
+    head_sld = 0.0
+    if head_vol > 0 and head_nsl != 0:
+        head_sld = head_nsl * 1e-5 / head_vol
 
     try:
         tail = obj.tails
@@ -74,6 +80,9 @@ def get_lipid_constants(lipid_name: str):
         tail_vol = 800.0
 
     tail_sl = tail_nsl * 1e-5 if tail_nsl != 0 else 0.0
+    tail_sld = 0.0
+    if tail_vol > 0 and tail_nsl != 0:
+        tail_sld = tail_nsl * 1e-5 / tail_vol
 
     return {
         "name": lipid_name,
@@ -81,6 +90,9 @@ def get_lipid_constants(lipid_name: str):
         "head_sl": float(head_sl),
         "tail_vol": float(tail_vol),
         "tail_sl": float(tail_sl),
+        "head_sld": float(head_sld),
+        "tail_vol": float(tail_vol),
+        "tail_sld": float(tail_sld),
     }
 
 
@@ -107,6 +119,19 @@ def extract_bilayers_from_model(model):
     parts = [p.strip() for p in cleaned.split("|") if p.strip()]
     if can_rewrite_stack:
         model.stack = " | ".join(parts)
+    stack = getattr(model, "stack", "")
+    tokens = [t.strip() for t in stack.split("|")]
+
+    bilayers = []
+    kept = []
+    for t in tokens:
+        m = RE_BILAYER.match(t)
+        if m:
+            bilayers.append({"inner": m.group(1), "outer": m.group(2)})
+        else:
+            kept.append(t)
+
+    model.stack = " | ".join(kept)
     return bilayers
 
 
@@ -130,6 +155,14 @@ def _flatten_lipid(prefix: str, consts):
         # Legacy key names retained for generated-model compatibility.
         f"sld_head_{prefix}": consts["head_sl"],
         f"sld_tail_{prefix}": consts["tail_sl"],
+            f"sld_head_{prefix}": 1e-6,
+            f"sld_tail_{prefix}": 1e-6,
+        }
+    return {
+        f"v_head_{prefix}": consts["head_vol"],
+        f"sld_head_{prefix}": consts["head_sld"],
+        f"v_tail_{prefix}": consts["tail_vol"],
+        f"sld_tail_{prefix}": consts["tail_sld"],
     }
 
 
@@ -138,12 +171,18 @@ def build_bilayer_specs(bilayer_specs_raw):
     bilayer_specs = []
     if not bilayer_specs_raw:
         return bilayer_specs
+    if not HAS_MOLGROUPS:
+        raise RuntimeError(
+            "Detected bilayer(...) in model stack, but molgroups.lipids is not installed."
+        )
 
     for spec in bilayer_specs_raw:
         inner = spec["inner"]
         outer = spec["outer"]
         inner_consts = get_lipid_constants(inner) if HAS_MOLGROUPS else None
         outer_consts = get_lipid_constants(outer) if HAS_MOLGROUPS else None
+        inner_consts = get_lipid_constants(inner)
+        outer_consts = get_lipid_constants(outer)
         bilayer_specs.append(
             {
                 "inner": inner,

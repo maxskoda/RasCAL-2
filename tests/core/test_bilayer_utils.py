@@ -5,6 +5,7 @@ from rascal2.core.bilayer_utils import (
     build_bilayer_specs,
     extract_bilayers_from_model,
 )
+from rascal2.core.bilayer_utils import _flatten_lipid, extract_bilayers_from_model
 
 
 class _Model:
@@ -47,6 +48,8 @@ def test_extract_bilayers_from_model_supports_quoted_values_and_key_order():
 def test_extract_bilayers_from_model_accepts_raw_stack_string():
     found = extract_bilayers_from_model("Si | bilayer(inner=POPC, outer=POPC) | D2O")
     assert found == [{"inner": "POPC", "outer": "POPC"}]
+    assert found == []
+    assert model.stack == "air | bilayer(inner=DPPC outer=POPC) | Si"
 
 
 def test_flatten_lipid_defaults_when_missing_constants():
@@ -83,3 +86,5 @@ def test_build_bilayer_specs_uses_fallback_constants_without_molgroups():
     assert specs[0]["inner"] == "DPPC"
     assert specs[0]["outer"] == "POPC"
     assert specs[0]["v_head_inner"] > 0.0
+    assert flat["sld_head_inner"] == 1e-6
+    assert flat["sld_tail_inner"] == 1e-6

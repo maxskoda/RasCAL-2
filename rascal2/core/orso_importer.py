@@ -10,6 +10,8 @@ from orsopy.fileio import load_orso
 import ratapi as rat
 from rascal2.core.bilayer_utils import build_bilayer_specs, extract_bilayers_from_model
 from ratapi.models import CustomFile, Data, Parameter, Layer
+from rascal2.core.bilayer_utils import extract_bilayers_from_model
+from ratapi.models import Data, Parameter, Layer
 
 
 # -----------------------------------------------------------------------------
@@ -185,6 +187,10 @@ def {function_name}(params, bulk_in, bulk_out, contrast):
         sld_tail_i = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * sld_tail_inner)
         sld_tail_o = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * sld_tail_outer)
         sld_head_o = (head_hyd_outer * sld_w) + ((1 - head_hyd_outer) * sld_head_outer)
+        sld_head_i = (head_hyd_inner * sld_w) + ((1 - head_hyd_inner) * spec["sld_head_inner"])
+        sld_tail_i = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * spec["sld_tail_inner"])
+        sld_tail_o = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * spec["sld_tail_outer"])
+        sld_head_o = (head_hyd_outer * sld_w) + ((1 - head_hyd_outer) * spec["sld_head_outer"])
 
         layers.extend(
             [
@@ -257,6 +263,7 @@ def import_ort_to_project(
         if model0 is not None:
             bilayer_specs_raw = extract_bilayers_from_model(model0)
             bilayer_present = bool(bilayer_specs_raw)
+            extract_bilayers_from_model(model0)
             try:
                 resolved = model0.resolve_to_layers()
                 if len(resolved) >= 2:
@@ -328,6 +335,7 @@ def import_ort_to_project(
             bilayer_present = bilayer_present or bool(bilayers_here)
             if bilayers_here and not bilayer_specs_raw:
                 bilayer_specs_raw = bilayers_here
+            extract_bilayers_from_model(model)
             try:
                 resolved = model.resolve_to_layers()
                 bulk_out = resolved[-1]
@@ -383,6 +391,7 @@ def import_ort_to_project(
                 filename=custom_filename,
                 language="python",
                 path=str(proj_dir),
+                path=".",
                 function_name=function_name,
             )
         )
