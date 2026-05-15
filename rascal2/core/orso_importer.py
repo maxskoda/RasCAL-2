@@ -8,6 +8,8 @@ import numpy as np
 from orsopy.fileio import load_orso
 
 import ratapi as rat
+from rascal2.core.bilayer_utils import build_bilayer_specs, extract_bilayers_from_model
+from ratapi.models import CustomFile, Data, Parameter, Layer
 from rascal2.core.bilayer_utils import extract_bilayers_from_model
 from ratapi.models import Data, Parameter, Layer
 
@@ -172,6 +174,19 @@ def {function_name}(params, bulk_in, bulk_out, contrast):
         t_head_o = v_head_o / apm if apm else 0.0
 
         sld_w = bulk_out[contrast]
+        sl_head_inner = spec.get("sl_head_inner", spec["sld_head_inner"])
+        sl_tail_inner = spec.get("sl_tail_inner", spec["sld_tail_inner"])
+        sl_tail_outer = spec.get("sl_tail_outer", spec["sld_tail_outer"])
+        sl_head_outer = spec.get("sl_head_outer", spec["sld_head_outer"])
+        sld_head_inner = sl_head_inner / v_head_i if v_head_i else 0.0
+        sld_tail_inner = sl_tail_inner / v_tail_i if v_tail_i else 0.0
+        sld_tail_outer = sl_tail_outer / v_tail_o if v_tail_o else 0.0
+        sld_head_outer = sl_head_outer / v_head_o if v_head_o else 0.0
+
+        sld_head_i = (head_hyd_inner * sld_w) + ((1 - head_hyd_inner) * sld_head_inner)
+        sld_tail_i = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * sld_tail_inner)
+        sld_tail_o = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * sld_tail_outer)
+        sld_head_o = (head_hyd_outer * sld_w) + ((1 - head_hyd_outer) * sld_head_outer)
         sld_head_i = (head_hyd_inner * sld_w) + ((1 - head_hyd_inner) * spec["sld_head_inner"])
         sld_tail_i = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * spec["sld_tail_inner"])
         sld_tail_o = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * spec["sld_tail_outer"])
@@ -246,6 +261,8 @@ def import_ort_to_project(
         model0 = getattr(sample0, "model", None)
 
         if model0 is not None:
+            bilayer_specs_raw = extract_bilayers_from_model(model0)
+            bilayer_present = bool(bilayer_specs_raw)
             extract_bilayers_from_model(model0)
             try:
                 resolved = model0.resolve_to_layers()
@@ -314,6 +331,10 @@ def import_ort_to_project(
 
         model = getattr(sample, "model", None)
         if model is not None:
+            bilayers_here = extract_bilayers_from_model(model)
+            bilayer_present = bilayer_present or bool(bilayers_here)
+            if bilayers_here and not bilayer_specs_raw:
+                bilayer_specs_raw = bilayers_here
             extract_bilayers_from_model(model)
             try:
                 resolved = model.resolve_to_layers()
@@ -343,6 +364,10 @@ def import_ort_to_project(
         project.model = "custom layers"
         project.layers.clear()
         project.custom_files.clear()
+        keep = {"Substrate Roughness"}
+        for p in list(project.parameters):
+            if p.name not in keep:
+                project.parameters.remove(p)
 
         bilayer_specs = build_bilayer_specs(bilayer_specs_raw)
         _ensure_parameter(project, "Substrate Roughness", 3.0, floor=0.0)
@@ -365,6 +390,7 @@ def import_ort_to_project(
                 name="ORSO Bilayer Model",
                 filename=custom_filename,
                 language="python",
+                path=str(proj_dir),
                 path=".",
                 function_name=function_name,
             )
