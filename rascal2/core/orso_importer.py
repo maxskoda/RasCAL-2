@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
-from orsopy.fileio import load_orso
-
 import ratapi as rat
-from rascal2.core.bilayer_utils import build_bilayer_specs, extract_bilayers_from_model
-from ratapi.models import CustomFile, Data, Parameter, Layer
-from rascal2.core.bilayer_utils import extract_bilayers_from_model
-from ratapi.models import Data, Parameter, Layer
+from orsopy.fileio import load_orso
+from ratapi.models import CustomFile, Data, Layer, Parameter
 
+from rascal2.core.bilayer_utils import build_bilayer_specs, extract_bilayers_from_model
 
 # -----------------------------------------------------------------------------
 # Constants / helpers
@@ -82,8 +78,8 @@ def _ensure_bulk_parameter_exists(
                 row.value = v
             return ref
 
-    RowCls = table[0].__class__ if table else None
-    if RowCls is None:
+    row_cls = table[0].__class__ if table else None
+    if row_cls is None:
         return ref
 
     if sld_value != 0.0:
@@ -93,10 +89,10 @@ def _ensure_bulk_parameter_exists(
         v, mn, mx = 0.0, -1e-6, 1e-6
 
     payload = dict(name=ref, min=mn, value=v, max=mx, fit=False)
-    allowed = getattr(RowCls, "model_fields", {}).keys()
+    allowed = getattr(row_cls, "model_fields", {}).keys()
     payload = {k: v for k, v in payload.items() if k in allowed}
 
-    table.append(RowCls(**payload))
+    table.append(row_cls(**payload))
     return ref
 
 
@@ -131,6 +127,13 @@ def _ensure_parameter(
     return name
 
 
+def _remove_unneeded_parameters_in_place(project: rat.Project, keep: set[str]) -> None:
+    """Remove parameters not in ``keep`` without clearing RAT protected parameters."""
+    for parameter in list(project.parameters):
+        if parameter.name not in keep:
+            project.parameters.remove(parameter)
+
+
 def _write_bilayer_custom_model(
     project_dir: Path,
     filename: str,
@@ -139,7 +142,18 @@ def _write_bilayer_custom_model(
 ) -> str:
     file_path = project_dir / filename
     function_name = file_path.stem
-    payload = repr({"base_layers": base_layers, "bilayer_specs": bilayer_specs})
+    normal_parameter_names = []
+    for layer in base_layers:
+        for param_name in (layer["thickness_param"], layer["roughness_param"], layer["sld_param"]):
+            if param_name not in normal_parameter_names:
+                normal_parameter_names.append(param_name)
+    payload = repr(
+        {
+            "base_layers": base_layers,
+            "bilayer_specs": bilayer_specs,
+            "normal_parameter_names": normal_parameter_names,
+        }
+    )
 
     content = f'''import numpy as np
 
@@ -152,9 +166,22 @@ def {function_name}(params, bulk_in, bulk_out, contrast):
     p = list(params)
     sub_rough = p.pop(0) if p else 3.0
 
+    normal_values = {{}}
+    for param_name in MODEL_PAYLOAD["normal_parameter_names"]:
+        normal_values[param_name] = p.pop(0) if p else None
+
     layers = []
     for layer in MODEL_PAYLOAD["base_layers"]:
-        layers.append([layer["thickness"], layer["sld"], layer["roughness"]])
+        thickness = normal_values.get(layer["thickness_param"])
+        roughness = normal_values.get(layer["roughness_param"])
+        sld = normal_values.get(layer["sld_param"])
+        if thickness is None:
+            thickness = layer["thickness"]
+        if roughness is None:
+            roughness = layer["roughness"]
+        if sld is None:
+            sld = layer["sld"]
+        layers.append([thickness, sld, roughness])
 
     for spec in MODEL_PAYLOAD["bilayer_specs"]:
         apm = p.pop(0) if p else 55.0
@@ -174,10 +201,10 @@ def {function_name}(params, bulk_in, bulk_out, contrast):
         t_head_o = v_head_o / apm if apm else 0.0
 
         sld_w = bulk_out[contrast]
-        sl_head_inner = spec.get("sl_head_inner", spec["sld_head_inner"])
-        sl_tail_inner = spec.get("sl_tail_inner", spec["sld_tail_inner"])
-        sl_tail_outer = spec.get("sl_tail_outer", spec["sld_tail_outer"])
-        sl_head_outer = spec.get("sl_head_outer", spec["sld_head_outer"])
+        sl_head_inner = spec["sl_head_inner"] if "sl_head_inner" in spec else spec["sld_head_inner"]
+        sl_tail_inner = spec["sl_tail_inner"] if "sl_tail_inner" in spec else spec["sld_tail_inner"]
+        sl_tail_outer = spec["sl_tail_outer"] if "sl_tail_outer" in spec else spec["sld_tail_outer"]
+        sl_head_outer = spec["sl_head_outer"] if "sl_head_outer" in spec else spec["sld_head_outer"]
         sld_head_inner = sl_head_inner / v_head_i if v_head_i else 0.0
         sld_tail_inner = sl_tail_inner / v_tail_i if v_tail_i else 0.0
         sld_tail_outer = sl_tail_outer / v_tail_o if v_tail_o else 0.0
@@ -187,11 +214,6 @@ def {function_name}(params, bulk_in, bulk_out, contrast):
         sld_tail_i = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * sld_tail_inner)
         sld_tail_o = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * sld_tail_outer)
         sld_head_o = (head_hyd_outer * sld_w) + ((1 - head_hyd_outer) * sld_head_outer)
-        sld_head_i = (head_hyd_inner * sld_w) + ((1 - head_hyd_inner) * spec["sld_head_inner"])
-        sld_tail_i = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * spec["sld_tail_inner"])
-        sld_tail_o = (bilayer_hyd * sld_w) + ((1 - bilayer_hyd) * spec["sld_tail_outer"])
-        sld_head_o = (head_hyd_outer * sld_w) + ((1 - head_hyd_outer) * spec["sld_head_outer"])
-
         layers.extend(
             [
                 [t_head_i, sld_head_i, rough],
@@ -215,11 +237,8 @@ def import_ort_to_project(
     ort_path: str,
     base_project: rat.Project,
     project_folder: str,
-) -> tuple[rat.Project, Optional[rat.Controls]]:
-    """
-    Import ORSO (.ort) into RasCAL-2 standard-layers project.
-    """
-
+) -> tuple[rat.Project, rat.Controls | None]:
+    """Import ORSO (.ort) into RasCAL-2 standard-layers project."""
     ort_file = Path(ort_path).resolve()
     proj_dir = Path(project_folder).resolve()
 
@@ -263,7 +282,6 @@ def import_ort_to_project(
         if model0 is not None:
             bilayer_specs_raw = extract_bilayers_from_model(model0)
             bilayer_present = bool(bilayer_specs_raw)
-            extract_bilayers_from_model(model0)
             try:
                 resolved = model0.resolve_to_layers()
                 if len(resolved) >= 2:
@@ -304,7 +322,15 @@ def import_ort_to_project(
                         )
                         layer_name_stack.append(lname)
                         base_layers_for_custom.append(
-                            {"name": lname, "thickness": t, "sld": s, "roughness": r}
+                            {
+                                "name": lname,
+                                "thickness": t,
+                                "thickness_param": t_p,
+                                "sld": s,
+                                "sld_param": s_p,
+                                "roughness": r,
+                                "roughness_param": r_p,
+                            }
                         )
             except Exception as e:
                 print("ORSO model resolution failed:", e)
@@ -335,7 +361,6 @@ def import_ort_to_project(
             bilayer_present = bilayer_present or bool(bilayers_here)
             if bilayers_here and not bilayer_specs_raw:
                 bilayer_specs_raw = bilayers_here
-            extract_bilayers_from_model(model)
             try:
                 resolved = model.resolve_to_layers()
                 bulk_out = resolved[-1]
@@ -364,13 +389,17 @@ def import_ort_to_project(
         project.model = "custom layers"
         project.layers.clear()
         project.custom_files.clear()
-        keep = {"Substrate Roughness"}
-        for p in list(project.parameters):
-            if p.name not in keep:
-                project.parameters.remove(p)
+        normal_parameter_names = []
+        for layer in base_layers_for_custom:
+            for param_name in (layer["thickness_param"], layer["roughness_param"], layer["sld_param"]):
+                if param_name not in normal_parameter_names:
+                    normal_parameter_names.append(param_name)
+        keep = {"Substrate Roughness", *normal_parameter_names}
+        _remove_unneeded_parameters_in_place(project, keep)
+
+        _ensure_parameter(project, "Substrate Roughness", 3.0, floor=0.0)
 
         bilayer_specs = build_bilayer_specs(bilayer_specs_raw)
-        _ensure_parameter(project, "Substrate Roughness", 3.0, floor=0.0)
         for idx, _ in enumerate(bilayer_specs, start=1):
             _ensure_parameter(project, f"Bilayer{idx} APM", 55.0, floor=1.0)
             _ensure_parameter(project, f"Bilayer{idx} HeadHyd Inner", 0.2, floor=0.0)
@@ -391,7 +420,6 @@ def import_ort_to_project(
                 filename=custom_filename,
                 language="python",
                 path=str(proj_dir),
-                path=".",
                 function_name=function_name,
             )
         )

@@ -1,9 +1,7 @@
 """Tests for bilayer-aware ORSO import."""
 
-from pathlib import Path
-from types import SimpleNamespace
-
 import importlib.util
+from types import SimpleNamespace
 
 import ratapi as rat
 
@@ -69,10 +67,15 @@ def test_import_ort_to_project_switches_to_custom_layers_for_bilayer(tmp_path, m
     assert out_controls is None
     assert out_project.model == "custom layers"
     assert out_project.custom_files[0].name == "ORSO Bilayer Model"
+    assert out_project.custom_files[0].path == str((tmp_path / "proj").resolve())
     assert out_project.contrasts[0].model == ["ORSO Bilayer Model"]
+    assert [p.name for p in out_project.parameters[:4]] == [
+        "Substrate Roughness",
+        "Oxide thickness",
+        "Oxide rough",
+        "Oxide SLD",
+    ]
     assert any(p.name == "Bilayer1 APM" for p in out_project.parameters)
-    assert out_project.parameters[0].name == "Substrate Roughness"
-    assert all("thickness" not in p.name.lower() for p in out_project.parameters)
     assert (tmp_path / "proj" / "orso_bilayer_model.py").exists()
 
 
@@ -108,4 +111,59 @@ def test_write_bilayer_custom_model_converts_scattering_lengths_to_slds(tmp_path
     assert layers[1, 1] == (0.1 * 6.0e-6) + (0.9 * (-2.0e-4 / 200.0))
     assert layers[2, 1] == (0.1 * 6.0e-6) + (0.9 * (-4.0e-4 / 200.0))
     assert layers[3, 1] == (0.5 * 6.0e-6) + (0.5 * (5.0e-4 / 100.0))
-    assert (tmp_path / "proj" / "orso_bilayer_model.py").exists()
+
+
+def test_write_bilayer_custom_model_uses_fit_params_for_base_layers(tmp_path):
+    function_name = orso_importer._write_bilayer_custom_model(
+        tmp_path,
+        "generated_model.py",
+        [
+            {
+                "name": "Oxide",
+                "thickness": 10.0,
+                "thickness_param": "Oxide thickness",
+                "sld": 2.0e-6,
+                "sld_param": "Oxide SLD",
+                "roughness": 3.0,
+                "roughness_param": "Oxide rough",
+            }
+        ],
+        [
+            {
+                "v_head_inner": 100.0,
+                "sl_head_inner": 4.0e-4,
+                "v_tail_inner": 200.0,
+                "sl_tail_inner": -2.0e-4,
+                "v_head_outer": 100.0,
+                "sl_head_outer": 5.0e-4,
+                "v_tail_outer": 200.0,
+                "sl_tail_outer": -4.0e-4,
+            }
+        ],
+    )
+    spec = importlib.util.spec_from_file_location("generated_model", tmp_path / "generated_model.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    layers, _ = getattr(module, function_name)(
+        [3.0, 12.0, 4.0, 3.0e-6, 50.0, 0.25, 0.5, 0.1, 4.0], [], [6.0e-6], 0
+    )
+
+    assert layers[0].tolist() == [12.0, 3.0e-6, 4.0]
+    assert layers[1, 1] == (0.25 * 6.0e-6) + (0.75 * (4.0e-4 / 100.0))
+
+
+def test_remove_unneeded_parameters_does_not_clear_protected_parameters():
+    class ProtectedParameterList(list):
+        def clear(self):
+            raise AssertionError("protected parameters must not be cleared")
+
+    protected = SimpleNamespace(name="Substrate Roughness")
+    kept = SimpleNamespace(name="Oxide thickness")
+    removed = SimpleNamespace(name="Unused parameter")
+    project = SimpleNamespace(parameters=ProtectedParameterList([protected, kept, removed]))
+
+    orso_importer._remove_unneeded_parameters_in_place(project, {"Substrate Roughness", "Oxide thickness"})
+
+    assert project.parameters == [protected, kept]
