@@ -67,10 +67,15 @@ def test_import_ort_to_project_switches_to_custom_layers_for_bilayer(tmp_path, m
     assert out_controls is None
     assert out_project.model == "custom layers"
     assert out_project.custom_files[0].name == "ORSO Bilayer Model"
+    assert out_project.custom_files[0].path == str((tmp_path / "proj").resolve())
     assert out_project.contrasts[0].model == ["ORSO Bilayer Model"]
+    assert [p.name for p in out_project.parameters[:4]] == [
+        "Substrate Roughness",
+        "Oxide thickness",
+        "Oxide rough",
+        "Oxide SLD",
+    ]
     assert any(p.name == "Bilayer1 APM" for p in out_project.parameters)
-    assert out_project.parameters[0].name == "Substrate Roughness"
-    assert all("thickness" not in p.name.lower() for p in out_project.parameters)
     assert (tmp_path / "proj" / "orso_bilayer_model.py").exists()
 
 

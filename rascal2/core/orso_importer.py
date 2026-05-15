@@ -135,7 +135,18 @@ def _write_bilayer_custom_model(
 ) -> str:
     file_path = project_dir / filename
     function_name = file_path.stem
-    payload = repr({"base_layers": base_layers, "bilayer_specs": bilayer_specs})
+    normal_parameter_names = []
+    for layer in base_layers:
+        for param_name in (layer["thickness_param"], layer["roughness_param"], layer["sld_param"]):
+            if param_name not in normal_parameter_names:
+                normal_parameter_names.append(param_name)
+    payload = repr(
+        {
+            "base_layers": base_layers,
+            "bilayer_specs": bilayer_specs,
+            "normal_parameter_names": normal_parameter_names,
+        }
+    )
 
     content = f'''import numpy as np
 
@@ -148,9 +159,22 @@ def {function_name}(params, bulk_in, bulk_out, contrast):
     p = list(params)
     sub_rough = p.pop(0) if p else 3.0
 
+    normal_values = {{}}
+    for param_name in MODEL_PAYLOAD["normal_parameter_names"]:
+        normal_values[param_name] = p.pop(0) if p else None
+
     layers = []
     for layer in MODEL_PAYLOAD["base_layers"]:
-        layers.append([layer["thickness"], layer["sld"], layer["roughness"]])
+        thickness = normal_values.get(layer["thickness_param"])
+        roughness = normal_values.get(layer["roughness_param"])
+        sld = normal_values.get(layer["sld_param"])
+        if thickness is None:
+            thickness = layer["thickness"]
+        if roughness is None:
+            roughness = layer["roughness"]
+        if sld is None:
+            sld = layer["sld"]
+        layers.append([thickness, sld, roughness])
 
     for spec in MODEL_PAYLOAD["bilayer_specs"]:
         apm = p.pop(0) if p else 55.0
@@ -291,7 +315,15 @@ def import_ort_to_project(
                         )
                         layer_name_stack.append(lname)
                         base_layers_for_custom.append(
-                            {"name": lname, "thickness": t, "sld": s, "roughness": r}
+                            {
+                                "name": lname,
+                                "thickness": t,
+                                "thickness_param": t_p,
+                                "sld": s,
+                                "sld_param": s_p,
+                                "roughness": r,
+                                "roughness_param": r_p,
+                            }
                         )
             except Exception as e:
                 print("ORSO model resolution failed:", e)
@@ -350,13 +382,26 @@ def import_ort_to_project(
         project.model = "custom layers"
         project.layers.clear()
         project.custom_files.clear()
-        keep = {"Substrate Roughness"}
+        normal_parameter_names = []
+        for layer in base_layers_for_custom:
+            for param_name in (layer["thickness_param"], layer["roughness_param"], layer["sld_param"]):
+                if param_name not in normal_parameter_names:
+                    normal_parameter_names.append(param_name)
+        keep = {"Substrate Roughness", *normal_parameter_names}
         for p in list(project.parameters):
             if p.name not in keep:
                 project.parameters.remove(p)
 
-        bilayer_specs = build_bilayer_specs(bilayer_specs_raw)
         _ensure_parameter(project, "Substrate Roughness", 3.0, floor=0.0)
+        retained_params = {p.name: p for p in project.parameters if p.name in keep}
+        ordered_param_names = ["Substrate Roughness", *normal_parameter_names]
+        project.parameters.clear()
+        for param_name in ordered_param_names:
+            param = retained_params.get(param_name)
+            if param is not None:
+                project.parameters.append(param)
+
+        bilayer_specs = build_bilayer_specs(bilayer_specs_raw)
         for idx, _ in enumerate(bilayer_specs, start=1):
             _ensure_parameter(project, f"Bilayer{idx} APM", 55.0, floor=1.0)
             _ensure_parameter(project, f"Bilayer{idx} HeadHyd Inner", 0.2, floor=0.0)
