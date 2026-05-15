@@ -421,7 +421,7 @@ def import_ort_to_project(
                 name="ORSO Bilayer Model",
                 filename=custom_filename,
                 language="python",
-                path=str(proj_dir),
+                path=".",
                 function_name=function_name,
             )
         )
