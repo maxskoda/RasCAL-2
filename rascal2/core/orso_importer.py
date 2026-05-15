@@ -127,6 +127,13 @@ def _ensure_parameter(
     return name
 
 
+def _remove_unneeded_parameters_in_place(project: rat.Project, keep: set[str]) -> None:
+    """Remove parameters not in ``keep`` without clearing RAT protected parameters."""
+    for parameter in list(project.parameters):
+        if parameter.name not in keep:
+            project.parameters.remove(parameter)
+
+
 def _write_bilayer_custom_model(
     project_dir: Path,
     filename: str,
@@ -388,18 +395,9 @@ def import_ort_to_project(
                 if param_name not in normal_parameter_names:
                     normal_parameter_names.append(param_name)
         keep = {"Substrate Roughness", *normal_parameter_names}
-        for p in list(project.parameters):
-            if p.name not in keep:
-                project.parameters.remove(p)
+        _remove_unneeded_parameters_in_place(project, keep)
 
         _ensure_parameter(project, "Substrate Roughness", 3.0, floor=0.0)
-        retained_params = {p.name: p for p in project.parameters if p.name in keep}
-        ordered_param_names = ["Substrate Roughness", *normal_parameter_names]
-        project.parameters.clear()
-        for param_name in ordered_param_names:
-            param = retained_params.get(param_name)
-            if param is not None:
-                project.parameters.append(param)
 
         bilayer_specs = build_bilayer_specs(bilayer_specs_raw)
         for idx, _ in enumerate(bilayer_specs, start=1):
@@ -421,7 +419,7 @@ def import_ort_to_project(
                 name="ORSO Bilayer Model",
                 filename=custom_filename,
                 language="python",
-                path=".",
+                path=str(proj_dir),
                 function_name=function_name,
             )
         )
