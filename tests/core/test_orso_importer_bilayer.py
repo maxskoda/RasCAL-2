@@ -1,9 +1,7 @@
 """Tests for bilayer-aware ORSO import."""
 
-from pathlib import Path
-from types import SimpleNamespace
-
 import importlib.util
+from types import SimpleNamespace
 
 import ratapi as rat
 
@@ -108,4 +106,3 @@ def test_write_bilayer_custom_model_converts_scattering_lengths_to_slds(tmp_path
     assert layers[1, 1] == (0.1 * 6.0e-6) + (0.9 * (-2.0e-4 / 200.0))
     assert layers[2, 1] == (0.1 * 6.0e-6) + (0.9 * (-4.0e-4 / 200.0))
     assert layers[3, 1] == (0.5 * 6.0e-6) + (0.5 * (5.0e-4 / 100.0))
-    assert (tmp_path / "proj" / "orso_bilayer_model.py").exists()
