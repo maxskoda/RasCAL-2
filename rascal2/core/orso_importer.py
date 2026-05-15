@@ -393,6 +393,13 @@ def import_ort_to_project(
                 project.parameters.remove(p)
 
         _ensure_parameter(project, "Substrate Roughness", 3.0, floor=0.0)
+        retained_params = {p.name: p for p in project.parameters if p.name in keep}
+        ordered_param_names = ["Substrate Roughness", *normal_parameter_names]
+        project.parameters.clear()
+        for param_name in ordered_param_names:
+            param = retained_params.get(param_name)
+            if param is not None:
+                project.parameters.append(param)
 
         bilayer_specs = build_bilayer_specs(bilayer_specs_raw)
         for idx, _ in enumerate(bilayer_specs, start=1):
@@ -414,7 +421,7 @@ def import_ort_to_project(
                 name="ORSO Bilayer Model",
                 filename=custom_filename,
                 language="python",
-                path=str(proj_dir),
+                path=".",
                 function_name=function_name,
             )
         )
