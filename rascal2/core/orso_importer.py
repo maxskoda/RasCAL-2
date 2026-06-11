@@ -264,6 +264,16 @@ def import_ort_to_project(
     default_resolution = "Resolution 1"
     default_scalefactor = "Scalefactor 1"
 
+    for row in project.scalefactors:
+        if row.name == default_scalefactor:
+            # Set the value before tightening the range; otherwise an existing
+            # value such as 0.23 can fail validation against the new min.
+            row.max = 1.2
+            row.value = 1.0
+            row.min = 0.8
+            row.fit = False
+            break
+
     # ------------------------------------------------------------
     # Resolve shared layer stack from first dataset
     # ------------------------------------------------------------
