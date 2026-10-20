@@ -2,10 +2,11 @@
 
 from pathlib import Path
 
-from PyQt6 import Qsci, QtGui, QtWidgets
+from PyQt6 import Qsci, QtCore, QtGui, QtWidgets
 from ratapi.utils.enums import Languages
 
 from rascal2.config import EXAMPLES_PATH, LOGGER, MatlabHelper
+from rascal2.widgets.model_assistant import ModelAssistant
 
 
 def edit_file(filename: str, language: Languages, parent: QtWidgets.QWidget):
@@ -100,13 +101,23 @@ class CustomFileEditorDialog(QtWidgets.QDialog, metaclass=Singleton):
         close_button.clicked.connect(self.reject)
 
         button_layout = QtWidgets.QHBoxLayout()
+        assistant_button = QtWidgets.QPushButton("Model Assistant", self)
+        assistant_button.setCheckable(True)
+        button_layout.addWidget(assistant_button)
         button_layout.addStretch(1)
         button_layout.addWidget(save_button)
         button_layout.addWidget(close_button)
         button_layout.addSpacing(10)
 
         layout = QtWidgets.QVBoxLayout()
-        layout.addWidget(self.editor)
+        self.assistant = ModelAssistant(self.editor, self)
+        self.assistant.hide()
+        assistant_button.toggled.connect(self.assistant.setVisible)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        splitter.addWidget(self.editor)
+        splitter.addWidget(self.assistant)
+        splitter.setSizes([800, 440])
+        layout.addWidget(splitter)
         layout.addLayout(button_layout)
 
         self.setLayout(layout)
@@ -171,6 +182,7 @@ class CustomFileEditorDialog(QtWidgets.QDialog, metaclass=Singleton):
                 self.save_file()
 
         self.file = file
+        self.assistant.reset(language)
         self.setWindowTitle(f"Edit {str(file)}")
         match language:
             case Languages.Python:
@@ -207,5 +219,15 @@ class CustomFileEditorDialog(QtWidgets.QDialog, metaclass=Singleton):
             QtWidgets.QMessageBox.critical(self, "Save File", message, QtWidgets.QMessageBox.StandardButton.Ok)
 
     def reject(self):
+        if self.assistant.worker and self.assistant.worker.isRunning():
+            self.assistant.stop()
+            return
         CustomFileEditorDialog._instance = None
         super().reject()
+
+    def closeEvent(self, event):
+        if self.assistant.worker and self.assistant.worker.isRunning():
+            self.assistant.stop()
+            event.ignore()
+            return
+        super().closeEvent(event)

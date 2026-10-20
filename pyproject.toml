@@ -8,6 +8,7 @@ dynamic = ["version"]
 dependencies = [
   "ratapi",
   "PyQt6",
+  "requests>=2.32",
 ]
 description = "RasCAL2: GUI for Reflectivity Algorithm Toolbox (RAT)"
 readme = "README.md"
