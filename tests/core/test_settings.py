@@ -124,3 +124,17 @@ def test_update_recent_projects(set_val_mock, recent_projects, path, expected):
                 assert expected == update_recent_projects(str(Path(temp, path)))
             else:
                 assert expected == update_recent_projects()
+
+
+@pytest.mark.parametrize("error", [PermissionError(13, "Access denied"), OSError(1331, "Account disabled")])
+@pytest.mark.parametrize("new_project", [None, "new-project"])
+@patch("rascal2.settings.get_global_settings")
+def test_recent_projects_skip_inaccessible_paths(mock_settings, error, new_project):
+    """An inaccessible network path must not hide accessible projects or crash the dialog."""
+    settings = mock_settings.return_value
+    settings.value.return_value = ["accessible", "network-share", "missing", "another-accessible"]
+    expected = ([new_project] if new_project else []) + ["accessible", "another-accessible"]
+    with patch("rascal2.settings.Path.exists", side_effect=[True, error, False, True]):
+        assert update_recent_projects(new_project) == expected
+    settings.setValue.assert_called_once_with("recent_projects", expected)
+    settings.sync.assert_called_once_with()

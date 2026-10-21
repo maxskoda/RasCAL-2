@@ -213,7 +213,14 @@ def update_recent_projects(path: str | None = None) -> list[str]:
 
     new_recent_projects = [str(path)] if path is not None else []
     for project in recent_projects:
-        if project != path and Path(project).exists():
+        if project == path:
+            continue
+        try:
+            exists = Path(project).exists()
+        except OSError:
+            # A disconnected share or expired network account must not prevent opening projects.
+            continue
+        if exists:
             new_recent_projects.append(str(project))
 
     new_recent_projects = new_recent_projects[:10]
