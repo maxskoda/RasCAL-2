@@ -11,7 +11,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from ratapi.utils.enums import Languages, Procedures, TypeOptions
 
 import rascal2.widgets.delegates as delegates
-from rascal2.config import path_for
+from rascal2.config import EXAMPLES_PATH, path_for
 from rascal2.dialogs.custom_file_editor import edit_file, edit_file_matlab
 
 
@@ -644,8 +644,75 @@ class CustomFileWidget(ProjectFieldWidget):
 
     classlist_model = CustomFileModel
 
+    def __init__(self, field, parent):
+        super().__init__(field, parent)
+        self.new_file_button = QtWidgets.QPushButton("New model file…", self)
+        self.new_file_button.setHidden(True)
+        self.new_file_button.clicked.connect(self.create_model_file)
+        self.layout().itemAt(0).layout().addWidget(self.new_file_button)
+
+    def create_model_file(self):
+        """Create a new empty source file, register it and open the built-in editor."""
+        filename, selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self, "New custom model file", "", "Python model (*.py);;MATLAB model (*.m)"
+        )
+        if not filename:
+            return
+        file = Path(filename)
+        if not file.suffix:
+            file = file.with_suffix(".m" if "MATLAB" in selected_filter else ".py")
+        if file.suffix not in (".py", ".m") or not file.stem.isidentifier():
+            QtWidgets.QMessageBox.warning(self, "New model file", "Choose a .py or .m file with a valid function name.")
+            return
+        if file.resolve().is_relative_to(EXAMPLES_PATH.resolve()):
+            QtWidgets.QMessageBox.warning(self, "New model file", "Choose a folder outside the bundled examples.")
+            return
+        language = Languages.Python if file.suffix == ".py" else Languages.Matlab
+        name = file.stem
+        names = {item.name for item in self.model.classlist}
+        count = 2
+        while name in names:
+            name = f"{file.stem} {count}"
+            count += 1
+        item = self.model.item_type(
+            name=name, filename=file.name, path=file.parent, language=language, function_name=file.stem
+        )
+        try:
+            # Exclusive creation protects existing files, even if the save dialog confirmed overwrite.
+            with file.open("x", encoding="utf-8"):
+                pass
+        except OSError as error:
+            QtWidgets.QMessageBox.warning(self, "New model file", f"Could not create a new file:\n{error}")
+            return
+        self.model.beginResetModel()
+        try:
+            self.model.classlist.append(item)
+        except (ValueError, TypeError) as error:
+            QtWidgets.QMessageBox.warning(
+                self, "New model file", f"The empty file was created, but could not be added to the project:\n{error}"
+            )
+            return
+        finally:
+            self.model.endResetModel()
+        self.model.func_names[str(file)] = [] if language == Languages.Python else None
+        self.edit()
+        dialog = edit_file(file, language, self)
+        if dialog is not None:
+            with contextlib.suppress(TypeError):
+                dialog.file_saved.disconnect(self.refresh_custom_file)
+            dialog.file_saved.connect(self.refresh_custom_file)
+
+    def refresh_custom_file(self, file):
+        """Refresh function choices after a newly created model is saved."""
+        for row, item in enumerate(self.model.classlist):
+            if item.path / item.filename == file:
+                column = self.model.headers.index("filename") + self.model.col_offset
+                self.model.setData(self.model.index(row, column), str(file))
+                break
+
     def edit(self):
         super().edit()
+        self.new_file_button.setVisible(True)
         edit_file_column = 1
         self.table.showColumn(edit_file_column)
         # disconnect from old table's buttons so they don't create dangling references

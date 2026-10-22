@@ -27,6 +27,20 @@ include relevant parameter order and constraints in your prompt when needed.
 Requests are independent, so include context again when asking a follow-up.
 Responses are not saved as conversation history.
 
+To start a model from scratch, open **Edit Project → Custom Files → New model
+file…**. Choose a new `.py` (Python) or `.m` (MATLAB) filename outside the bundled
+examples. RasCAL2 creates an empty file, adds it to the draft project's Custom
+Files list, and opens a blank editor. Existing files are never overwritten by
+this action; use **Edit File** to edit one instead.
+
+Click **Model Assistant** and describe the model you want, its parameter order,
+and whether it is a custom layers or custom XY model. Ask for the complete file
+in one fenced code block. Review and apply the suggestion, then click **Save**
+in the editor. The function choices in the Custom Files table are refreshed
+after saving. Finish applying your project edits and assign the custom file to
+the relevant contrasts before running a calculation. An empty file is not yet a
+runnable model. Cancelling project edits does not delete files created on disk.
+
 To request an edit, ask for a complete replacement in a single fenced code
 block. Review the proposed diff, then click **Apply reviewed replacement to
 editor**. Python replacements receive a syntax check; no generated code is
@@ -72,6 +86,14 @@ Assistant**. Set:
 | Google project | `prj-d-isis-vtxai-wc5y` |
 | Vertex location | `global` |
 | Model | An enabled Gemini model, for example `google/gemini-2.5-flash` if available to your project |
+
+Click **Save connection settings** to remember the provider, Google project,
+location and model on this computer. These preferences are restored when you
+reopen the editor or restart RasCAL2, and model names are remembered separately
+for Vertex and OpenAI-compatible providers. Previously saved preferences take
+precedence over environment-variable defaults. API keys, Google credentials,
+prompts and shared code are not saved by this button. The custom API base URL
+is still configured in the panel or through `RASCAL_ASSISTANT_URL`.
 
 The API key and custom base URL fields are disabled for Vertex AI. Its endpoint
 is built from the project and location. Bare Gemini IDs such as

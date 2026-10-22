@@ -30,6 +30,7 @@ def edit_file(filename: str, language: Languages, parent: QtWidgets.QWidget):
     dialog.open_file(file, language)
     dialog.setModal(False)
     dialog.show()
+    return dialog
 
 
 def edit_file_matlab(filename: str):
@@ -65,6 +66,8 @@ class CustomFileEditorDialog(QtWidgets.QDialog, metaclass=Singleton):
         The parent of this widget.
 
     """
+
+    file_saved = QtCore.pyqtSignal(object)
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -215,6 +218,7 @@ class CustomFileEditorDialog(QtWidgets.QDialog, metaclass=Singleton):
             self.file.write_text(self.editor.text())
             self.unchanged_text = self.editor.text()
             self.show_modified()
+            self.file_saved.emit(self.file)
         except OSError as ex:
             message = f"Failed to save custom file to {self.file}.\n"
             LOGGER.error(message, exc_info=ex)

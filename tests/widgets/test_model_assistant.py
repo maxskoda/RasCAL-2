@@ -335,3 +335,33 @@ def test_vertex_http_errors(auth, post, status, expected):
     assert str(status) in errors[0]
     assert expected in errors[0]
     assert "Bearer test" not in errors[0]
+
+
+def test_connection_preferences_survive_reopening_without_secrets(qt_application, tmp_path):
+    from PyQt6 import QtCore
+
+    settings = QtCore.QSettings(str(tmp_path / "assistant.ini"), QtCore.QSettings.Format.IniFormat)
+    with patch("rascal2.settings.get_global_settings", return_value=settings):
+        editor = Qsci.QsciScintilla()
+        panel = ModelAssistant(editor)
+        panel.model.setText("local-model")
+        panel.provider.setCurrentIndex(1)
+        panel.project.setText("saved-project")
+        panel.location.setText("global")
+        panel.model.setText("google/gemini-test")
+        panel.key.setText("do-not-store-this-secret")
+        panel.prompt.setPlainText("private prompt")
+        panel.save_connection.click()
+        panel.close()
+        restored = ModelAssistant(editor)
+        assert restored.provider.currentIndex() == 1
+        assert restored.project.text() == "saved-project"
+        assert restored.location.text() == "global"
+        assert restored.model.text() == "google/gemini-test"
+        restored.provider.setCurrentIndex(0)
+        assert restored.model.text() == "local-model"
+        stored = (tmp_path / "assistant.ini").read_text()
+        assert "do-not-store-this-secret" not in stored
+        assert "private prompt" not in stored
+        assert all(key.startswith("ModelAssistant/") for key in settings.allKeys())
+        restored.close()

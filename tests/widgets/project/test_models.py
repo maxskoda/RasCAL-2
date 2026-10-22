@@ -540,3 +540,91 @@ def test_resolution_disable_values(resolution_type, disabled_vals):
             assert not model.flags(index) & QtCore.Qt.ItemFlag.ItemIsEnabled
         else:
             assert model.flags(index) & QtCore.Qt.ItemFlag.ItemIsEnabled
+
+
+@pytest.mark.parametrize("suffix,language", [(".py", Languages.Python), (".m", Languages.Matlab)])
+def test_create_empty_custom_model(tmp_path, suffix, language):
+    from unittest.mock import patch
+
+    file = tmp_path / f"new_model{suffix}"
+    widget = CustomFileWidget("files", parent)
+    widget.update_model(ratapi.ClassList([ratapi.models.CustomFile(name="existing", filename="")]))
+    with (
+        patch("rascal2.widgets.project.tables.QtWidgets.QFileDialog.getSaveFileName", return_value=(str(file), "")),
+        patch("rascal2.widgets.project.tables.edit_file") as edit,
+    ):
+        widget.create_model_file()
+    assert file.read_text() == ""
+    assert len(widget.model.classlist) == 2
+    item = widget.model.classlist[-1]
+    assert item.filename == file.name
+    assert item.path == file.parent
+    assert item.language == language
+    assert item.function_name == "new_model"
+    edit.assert_called_once_with(file, language, widget)
+    # Saving AI-generated code refreshes the function name and dropdown.
+    if suffix == ".py":
+        file.write_text("def generated_model(params, bulk_in, bulk_out, contrast):\n    return [], 0\n")
+        widget.refresh_custom_file(file)
+        assert item.function_name == "generated_model"
+        assert widget.model.func_names[str(file)] == ["generated_model"]
+
+
+def test_create_custom_model_never_overwrites_existing_file(tmp_path):
+    from unittest.mock import patch
+
+    file = tmp_path / "existing.py"
+    file.write_text("original model")
+    widget = CustomFileWidget("files", parent)
+    widget.update_model(ratapi.ClassList([ratapi.models.CustomFile(name="existing", filename="")]))
+    with (
+        patch("rascal2.widgets.project.tables.QtWidgets.QFileDialog.getSaveFileName", return_value=(str(file), "")),
+        patch("rascal2.widgets.project.tables.QtWidgets.QMessageBox.warning") as warning,
+        patch("rascal2.widgets.project.tables.edit_file") as edit,
+    ):
+        widget.create_model_file()
+    assert file.read_text() == "original model"
+    assert len(widget.model.classlist) == 1
+    warning.assert_called_once()
+    edit.assert_not_called()
+
+
+def test_cancel_new_model_changes_nothing():
+    from unittest.mock import patch
+
+    widget = CustomFileWidget("files", parent)
+    widget.update_model(ratapi.ClassList([ratapi.models.CustomFile(name="existing", filename="")]))
+    with patch("rascal2.widgets.project.tables.QtWidgets.QFileDialog.getSaveFileName", return_value=("", "")):
+        widget.create_model_file()
+    assert len(widget.model.classlist) == 1
+
+
+def test_new_model_editor_ai_apply_save_and_function_refresh(tmp_path):
+    from unittest.mock import patch
+
+    from rascal2.dialogs.custom_file_editor import CustomFileEditorDialog
+
+    file = tmp_path / "new_model.py"
+    widget = CustomFileWidget("files", parent)
+    widget.update_model(ratapi.ClassList([ratapi.models.CustomFile(name="existing", filename="")]))
+    with patch("rascal2.widgets.project.tables.QtWidgets.QFileDialog.getSaveFileName", return_value=(str(file), "")):
+        widget.create_model_file()
+    dialog = CustomFileEditorDialog._instance
+    try:
+        assert dialog.file == file
+        assert dialog.editor.text() == ""
+        assert widget.model.func_names[str(file)] == []
+        dialog.assistant.snapshot = ""
+        dialog.assistant.response = (
+            "```python\ndef generated_model(params, bulk_in, bulk_out, contrast):\n    return [], 0\n```"
+        )
+        dialog.assistant.complete()
+        dialog.assistant.apply.click()
+        assert dialog.is_modified
+        assert file.read_text() == ""
+        dialog.save_file()
+        assert "def generated_model" in file.read_text()
+        assert widget.model.classlist[-1].function_name == "generated_model"
+        assert widget.model.func_names[str(file)] == ["generated_model"]
+    finally:
+        dialog.reject()

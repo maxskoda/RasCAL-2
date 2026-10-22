@@ -14,6 +14,7 @@ from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request
 from PyQt6 import QtCore, QtWidgets
 
+from rascal2 import settings as app_settings
 from rascal2.config import EXAMPLES_PATH
 
 SYSTEM_PROMPT = """You help write RAT custom reflectometry models in RasCAL2.
@@ -163,9 +164,19 @@ class ModelAssistant(QtWidgets.QWidget):
         form = QtWidgets.QFormLayout()
         self.provider = QtWidgets.QComboBox()
         self.provider.addItems(["OpenAI-compatible API", "Google Vertex AI (ADC)"])
-        self.project = QtWidgets.QLineEdit(os.getenv("GOOGLE_CLOUD_PROJECT", ""))
+        settings = app_settings.get_global_settings()
+        self.provider.setCurrentText(settings.value("ModelAssistant/provider", "OpenAI-compatible API"))
+        self._active_provider = None
+        self._provider_models = {
+            i: settings.value(f"ModelAssistant/model_{i}", os.getenv("RASCAL_ASSISTANT_MODEL", "")) for i in range(2)
+        }
+        self.project = QtWidgets.QLineEdit(
+            settings.value("ModelAssistant/project", os.getenv("GOOGLE_CLOUD_PROJECT", ""))
+        )
         self.project.setPlaceholderText("Google Cloud project ID")
-        self.location = QtWidgets.QLineEdit(os.getenv("GOOGLE_CLOUD_LOCATION", "global"))
+        self.location = QtWidgets.QLineEdit(
+            settings.value("ModelAssistant/location", os.getenv("GOOGLE_CLOUD_LOCATION", "global"))
+        )
         self.endpoint = QtWidgets.QLineEdit(os.getenv("RASCAL_ASSISTANT_URL", "https://api.openai.com/v1"))
         self.model = QtWidgets.QLineEdit(os.getenv("RASCAL_ASSISTANT_MODEL", ""))
         self.model.setPlaceholderText("Provider model name")
@@ -179,6 +190,12 @@ class ModelAssistant(QtWidgets.QWidget):
         form.addRow("Model", self.model)
         form.addRow("API key", self.key)
         layout.addLayout(form)
+        self.save_connection = QtWidgets.QPushButton("Save connection settings")
+        self.save_connection.setToolTip(
+            "Remember provider, project, location and model on this computer. No keys saved."
+        )
+        self.save_connection.clicked.connect(self.save_connection_settings)
+        layout.addWidget(self.save_connection)
         notice = QtWidgets.QLabel(
             "Send shares your prompt and chosen code with this provider. "
             "No project files or datasets are attached automatically. Responses are kept only in this window."
@@ -223,6 +240,10 @@ class ModelAssistant(QtWidgets.QWidget):
 
     def provider_changed(self):
         """Expose the relevant connection settings without making a network request."""
+        if self._active_provider is not None:
+            self._provider_models[self._active_provider] = self.model.text()
+        self._active_provider = self.provider.currentIndex()
+        self.model.setText(self._provider_models[self._active_provider])
         vertex = self.provider.currentIndex() == 1
         self.project.setEnabled(vertex)
         self.location.setEnabled(vertex)
@@ -233,6 +254,21 @@ class ModelAssistant(QtWidgets.QWidget):
             self.status.setText(
                 "Uses your local Google ADC login. No API key is needed. Choose an enabled Gemini model."
             )
+
+    def save_connection_settings(self):
+        """Persist non-secret connection preferences independently of project files."""
+        settings = app_settings.get_global_settings()
+        self._provider_models[self.provider.currentIndex()] = self.model.text().strip()
+        settings.setValue("ModelAssistant/provider", self.provider.currentText())
+        settings.setValue("ModelAssistant/project", self.project.text().strip())
+        settings.setValue("ModelAssistant/location", self.location.text().strip())
+        for provider, model in self._provider_models.items():
+            settings.setValue(f"ModelAssistant/model_{provider}", model)
+        settings.sync()
+        if settings.status() == QtCore.QSettings.Status.NoError:
+            self.status.setText("Connection settings saved on this computer. API keys and credentials were not saved.")
+        else:
+            self.status.setText("Could not save connection settings. Check your user settings folder permissions.")
 
     def shutdown(self):
         """Allow network cleanup before Qt destroys a running worker on exit."""
