@@ -6,7 +6,6 @@ from PyQt6 import Qsci, QtCore, QtGui, QtWidgets
 from ratapi.utils.enums import Languages
 
 from rascal2.config import EXAMPLES_PATH, LOGGER, MatlabHelper
-from rascal2.widgets.model_assistant import ModelAssistant
 
 
 def edit_file(filename: str, language: Languages, parent: QtWidgets.QWidget):
@@ -69,6 +68,9 @@ class CustomFileEditorDialog(QtWidgets.QDialog, metaclass=Singleton):
 
     def __init__(self, parent):
         super().__init__(parent)
+
+        # Defer the widgets package import to avoid its project/editor import cycle.
+        from rascal2.widgets.model_assistant import ModelAssistant
 
         self.file = None
         self.unchanged_text = ""

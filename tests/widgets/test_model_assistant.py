@@ -195,3 +195,143 @@ def test_cancel_discards_late_chunks_and_proposal(assistant):
     assert assistant.response == ""
     assert not assistant.apply.isEnabled()
     assert "Cancelled" in assistant.status.text()
+
+
+@pytest.mark.parametrize(
+    "project,location",
+    [
+        ("", "global"),
+        ("project/path", "global"),
+        ("valid-project", "global/evil"),
+        ("valid-project", "example.com"),
+        ("valid-project", ""),
+    ],
+)
+def test_vertex_rejects_invalid_endpoint_components(project, location):
+    from rascal2.widgets.model_assistant import vertex_endpoint
+
+    with pytest.raises(ValueError):
+        vertex_endpoint(project, location)
+
+
+def test_vertex_global_and_regional_endpoints():
+    from rascal2.widgets.model_assistant import vertex_endpoint
+
+    assert vertex_endpoint("test-project", "global") == (
+        "https://aiplatform.googleapis.com/v1beta1/projects/test-project/locations/global/endpoints/openapi"
+    )
+    assert vertex_endpoint("test-project", "europe-west4") == (
+        "https://europe-west4-aiplatform.googleapis.com/v1beta1/projects/"
+        "test-project/locations/europe-west4/endpoints/openapi"
+    )
+
+
+@patch("rascal2.widgets.model_assistant.CompletionWorker")
+def test_vertex_ui_uses_adc_and_never_passes_api_key(worker_class, assistant):
+    assistant.provider.setCurrentIndex(1)
+    assert not assistant.key.isEnabled()
+    assert not assistant.endpoint.isEnabled()
+    assistant.project.setText("test-project")
+    assistant.location.setText("global")
+    assistant.model.setText("gemini-2.5-flash")
+    assistant.key.setText("unrelated-provider-key")
+    assistant.endpoint.setText("https://unrelated.example")
+    assistant.prompt.setPlainText("Explain custom layers")
+    assistant.submit()
+    args, kwargs = worker_class.call_args
+    assert args[0].startswith("https://aiplatform.googleapis.com/")
+    assert args[1] == "google/gemini-2.5-flash"
+    assert args[2] == ""
+    assert kwargs == {"vertex": ("test-project", "global")}
+    assistant.worker = None
+    assistant.provider.setCurrentIndex(0)
+    assert assistant.key.isEnabled()
+    assert assistant.endpoint.isEnabled()
+
+
+@patch("rascal2.widgets.model_assistant.requests.post")
+@patch("rascal2.widgets.model_assistant.google.auth.default")
+def test_vertex_refreshes_adc_and_streams(default, post):
+    from datetime import datetime, timedelta
+
+    from google.auth.credentials import Credentials
+
+    class TestCredentials(Credentials):
+        def __init__(self):
+            super().__init__()
+            self.refreshes = 0
+            self._quota_project_id = "quota-project"
+
+        def refresh(self, request):
+            self.refreshes += 1
+            self.token = "test-only-token"
+            self.expiry = datetime.utcnow() + timedelta(hours=1)
+
+    credentials = TestCredentials()
+    default.return_value = (credentials, "adc-default-project")
+    response = post.return_value.__enter__.return_value
+    response.status_code = 200
+    response.iter_lines.side_effect = [
+        iter(['data: {"choices":[{"delta":{"content":"Vertex response"}}]}', "data: [DONE]"]),
+        iter(["data: [DONE]"]),
+    ]
+    worker = CompletionWorker(
+        "https://ignored.example", "google/gemini-test", "ignored-key", [], vertex=("test-project", "global")
+    )
+    chunks, errors = [], []
+    worker.chunk.connect(chunks.append)
+    worker.failed.connect(errors.append)
+    worker.run()
+    assert chunks == ["Vertex response"]
+    assert not errors
+    assert credentials.refreshes == 1
+    default.assert_called_with(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    args, kwargs = post.call_args
+    assert args[0] == (
+        "https://aiplatform.googleapis.com/v1beta1/projects/test-project/locations/global/"
+        "endpoints/openapi/chat/completions"
+    )
+    assert kwargs["headers"]["authorization"] == "Bearer test-only-token"
+    assert kwargs["headers"]["x-goog-user-project"] == "quota-project"
+    assert "ignored-key" not in str(kwargs)
+    # An expired session is refreshed again before the next model request.
+    credentials.expiry = datetime.utcnow() - timedelta(hours=1)
+    worker.run()
+    assert credentials.refreshes == 2
+
+
+@pytest.mark.parametrize("kind", ["missing", "expired"])
+@patch("rascal2.widgets.model_assistant.requests.post")
+@patch("rascal2.widgets.model_assistant.google.auth.default")
+def test_vertex_adc_failure_is_actionable_and_redacted(default, post, kind):
+    from google.auth.exceptions import DefaultCredentialsError, RefreshError
+
+    if kind == "missing":
+        default.side_effect = DefaultCredentialsError("private credential details")
+    else:
+        credentials = MagicMock()
+        credentials.before_request.side_effect = RefreshError("private token")
+        default.return_value = (credentials, "test-project")
+    worker = CompletionWorker("", "google/gemini-test", "", [], vertex=("test-project", "global"))
+    errors = []
+    worker.failed.connect(errors.append)
+    worker.run()
+    post.assert_not_called()
+    assert len(errors) == 1
+    assert "gcloud auth application-default login" in errors[0]
+    assert "private" not in errors[0]
+
+
+@pytest.mark.parametrize("status,expected", [(401, "refresh"), (403, "permissions"), (404, "location")])
+@patch("rascal2.widgets.model_assistant.requests.post")
+@patch("rascal2.widgets.model_assistant.vertex_headers", return_value={"Authorization": "Bearer test"})
+def test_vertex_http_errors(auth, post, status, expected):
+    response = post.return_value.__enter__.return_value
+    response.status_code = status
+    worker = CompletionWorker("", "google/gemini-test", "", [], vertex=("test-project", "global"))
+    errors = []
+    worker.failed.connect(errors.append)
+    worker.run()
+    assert str(status) in errors[0]
+    assert expected in errors[0]
+    assert "Bearer test" not in errors[0]

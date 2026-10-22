@@ -39,3 +39,66 @@ responses can be reviewed too, but do not receive a Python syntax check.
 applied. A stalled connection may take up to the network read timeout (30
 seconds) to return; closing the editor during a request cancels it first. No
 provider request is made until you click **Send**.
+
+### Google Vertex AI using your IRIS-IAM login
+
+Pull the `model-assistant` branch and install its updated dependencies in your
+PyCharm project environment:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+Complete your organisation's IRIS-IAM group approval and Google Cloud CLI login
+on the same Windows account that runs PyCharm. If you have already created the
+login configuration in your user folder, authenticate with:
+
+```powershell
+gcloud auth application-default login --login-config="$env:USERPROFILE\gcloud-auth-config.json"
+gcloud config set project prj-d-isis-vtxai-wc5y
+```
+
+Wait until the terminal confirms that credentials have been saved. Do not copy
+the credentials file into the repository or paste an access token into RasCAL2.
+The organisation's quota-project warning can be ignored as directed in its setup
+instructions; if ADC already specifies a quota project, the assistant preserves it.
+
+Restart RasCAL2, open a custom model in its built-in editor, and click **Model
+Assistant**. Set:
+
+| Field | Value |
+| --- | --- |
+| Provider | Google Vertex AI (ADC) |
+| Google project | `prj-d-isis-vtxai-wc5y` |
+| Vertex location | `global` |
+| Model | An enabled Gemini model, for example `google/gemini-2.5-flash` if available to your project |
+
+The API key and custom base URL fields are disabled for Vertex AI. Its endpoint
+is built from the project and location. Bare Gemini IDs such as
+`gemini-2.5-flash` are also accepted. This provider uses Vertex's OpenAI-compatible
+Gemini API; Anthropic models on Vertex are not supported by this connection.
+Regional locations such as `europe-west4` can be used when the chosen model and
+your organisation's policy support them. A `global` location does not guarantee
+that processing stays in Europe.
+
+Start with **No editor code** and send “Reply with a short hello.” This tests
+the actual model connection without sharing a model file. Then choose **Selected
+code** or **Whole file** for model-writing help. The existing review, syntax
+check, apply and undo workflow is unchanged.
+
+The assistant loads local Application Default Credentials through `google-auth`
+and refreshes access tokens as needed in its background worker. It does not
+launch a browser or store tokens in RasCAL2 settings. Optional defaults for the
+project and location come from `GOOGLE_CLOUD_PROJECT` and
+`GOOGLE_CLOUD_LOCATION`; set these in the PyCharm run configuration if desired.
+`GOOGLE_APPLICATION_CREDENTIALS`, if set, overrides gcloud's usual ADC file;
+check it if RasCAL2 appears to use an unexpected identity. The
+`gcloud-auth-config.json` login configuration is not itself the saved ADC file.
+
+If the institutional session expires (the supplied instructions specify 16
+hours), rerun the login command above and retry **Send**. Missing or expired
+ADC produces a login hint. HTTP 403 requires checking project/group/model
+permissions; HTTP 404 may mean an incorrect or unavailable model/location.
+Changing the active gcloud project alone does not grant access. The worker's
+ADC and Vertex behavior is covered by simulated-credential/HTTP tests; a live
+institutional connection must be validated on your authenticated computer.
